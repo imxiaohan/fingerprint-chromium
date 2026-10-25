@@ -1,0 +1,847 @@
+From 2f3728ba9e3ff0a41c4af3aa92653bff9ac46a2e Mon Sep 17 00:00:00 2001
+From: Tango <yanghan81@gmail.com>
+Date: Sat, 24 Oct 2026 20:59:15 -0700
+Subject: [PATCH] feat: workspace rail (left sidebar) + chrome://desktop home
+ page
+
+- WorkspaceRailView: letter avatar + desktop/AI/files/skills/tasks buttons
+- chrome://desktop WebUI: greeting + live clock + app grid (mock)
+- Desktop page registered as internal WebUI (enabled by default)
+- Rail inserted into BrowserView layout, contents area shifted right
+- Fixes: a11y names on rail buttons, dangling raw_ptr on close,
+  internal-WebUI pref default, pak aggregation into resources.pak
+---
+ chrome/browser/resources/BUILD.gn             |   1 +
+ .../resources/workspace/desktop_page/BUILD.gn |  17 ++
+ .../workspace/desktop_page/desktop_page.html  | 163 ++++++++++++++++++
+ .../workspace/desktop_page/desktop_page.ts    | 109 ++++++++++++
+ chrome/browser/ui/BUILD.gn                    |   4 +
+ chrome/browser/ui/views/frame/browser_view.cc |   7 +
+ chrome/browser/ui/views/frame/browser_view.h  |   2 +
+ .../views/frame/layout/browser_view_layout.h  |   2 +
+ .../layout/browser_view_tabbed_layout_impl.cc |  13 ++
+ .../ui/views/workspace/workspace_rail_view.cc | 142 +++++++++++++++
+ .../ui/views/workspace/workspace_rail_view.h  |  45 +++++
+ .../browser/ui/webui/chrome_web_ui_configs.cc |   2 +
+ .../ui/webui/workspace/desktop_page_ui.cc     |  31 ++++
+ .../ui/webui/workspace/desktop_page_ui.h      |  32 ++++
+ chrome/chrome_paks.gni                        |   2 +
+ chrome/common/webui_url_constants.h           |   1 +
+ components/webui/chrome_urls/pref_names.cc    |   5 +-
+ tools/gritsettings/resource_ids.spec          |   7 +
+ 18 files changed, 584 insertions(+), 1 deletion(-)
+ create mode 100644 chrome/browser/resources/workspace/desktop_page/BUILD.gn
+ create mode 100644 chrome/browser/resources/workspace/desktop_page/desktop_page.html
+ create mode 100644 chrome/browser/resources/workspace/desktop_page/desktop_page.ts
+ create mode 100644 chrome/browser/ui/views/workspace/workspace_rail_view.cc
+ create mode 100644 chrome/browser/ui/views/workspace/workspace_rail_view.h
+ create mode 100644 chrome/browser/ui/webui/workspace/desktop_page_ui.cc
+ create mode 100644 chrome/browser/ui/webui/workspace/desktop_page_ui.h
+
+diff --git a/chrome/browser/resources/BUILD.gn b/chrome/browser/resources/BUILD.gn
+index a3e6115134..cf013601d3 100644
+--- a/chrome/browser/resources/BUILD.gn
++++ b/chrome/browser/resources/BUILD.gn
+@@ -86,6 +86,7 @@ group("resources") {
+       "web_app_internals:resources",
+       "webui_browser:resources",
+       "webui_gallery:resources",
++      "workspace/desktop_page:resources",
+       "webui_toolbar:resources",
+       "whats_new:resources",
+       "//components/browser_apis/tab_strip/resources",
+diff --git a/chrome/browser/resources/workspace/desktop_page/BUILD.gn b/chrome/browser/resources/workspace/desktop_page/BUILD.gn
+new file mode 100644
+index 0000000000..0654fdcf9f
+--- /dev/null
++++ b/chrome/browser/resources/workspace/desktop_page/BUILD.gn
+@@ -0,0 +1,17 @@
++# Copyright 2025 The Chromium Authors
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++import("//ui/webui/resources/tools/build_webui.gni")
++
++assert(!is_android)
++
++build_webui("build") {
++  grd_prefix = "workspace_desktop"
++
++  static_files = [
++    "desktop_page.html",
++  ]
++
++  ts_files = [ "desktop_page.ts" ]
++}
+diff --git a/chrome/browser/resources/workspace/desktop_page/desktop_page.html b/chrome/browser/resources/workspace/desktop_page/desktop_page.html
+new file mode 100644
+index 0000000000..95c2600571
+--- /dev/null
++++ b/chrome/browser/resources/workspace/desktop_page/desktop_page.html
+@@ -0,0 +1,163 @@
++<!doctype html>
++<html lang="zh-CN">
++<head>
++  <meta charset="utf-8">
++  <title>桌面</title>
++  <style>
++    * {
++      margin: 0;
++      padding: 0;
++      box-sizing: border-box;
++    }
++
++    html,
++    body {
++      height: 100%;
++    }
++
++    body {
++      font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC',
++          'Microsoft YaHei', sans-serif;
++      background: linear-gradient(135deg, #eaf1fd 0%, #f7fafd 45%, #edf7f1 100%);
++      color: #1f2329;
++    }
++
++    .page {
++      max-width: 1160px;
++      margin: 0 auto;
++      padding: 64px 48px;
++    }
++
++    .header {
++      display: flex;
++      align-items: center;
++      justify-content: space-between;
++      margin-bottom: 56px;
++    }
++
++    .greeting-block {
++      display: flex;
++      align-items: center;
++      gap: 20px;
++    }
++
++    .avatar {
++      width: 60px;
++      height: 60px;
++      border-radius: 16px;
++      background: linear-gradient(135deg, #5b8cf7, #3d6bf0);
++      color: #fff;
++      font-size: 26px;
++      font-weight: 600;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++    }
++
++    .greeting-text h1 {
++      font-size: 26px;
++      font-weight: 600;
++      color: #1f2329;
++    }
++
++    .greeting-text h1 span {
++      color: #3d6bf0;
++    }
++
++    .greeting-text p {
++      margin-top: 6px;
++      font-size: 14px;
++      color: #7a8291;
++    }
++
++    .clock-block {
++      text-align: right;
++    }
++
++    .clock {
++      font-size: 40px;
++      font-weight: 600;
++      color: #1f2329;
++      font-variant-numeric: tabular-nums;
++    }
++
++    .date {
++      margin-top: 4px;
++      font-size: 14px;
++      color: #7a8291;
++    }
++
++    .grid {
++      display: grid;
++      grid-template-columns: repeat(5, 1fr);
++      gap: 48px 28px;
++    }
++
++    .card {
++      display: flex;
++      flex-direction: column;
++      align-items: center;
++      gap: 10px;
++      cursor: pointer;
++      text-decoration: none;
++      color: inherit;
++      border-radius: 16px;
++      padding: 20px 8px 16px;
++      transition: transform 0.15s ease, box-shadow 0.15s ease;
++    }
++
++    .card:hover {
++      transform: translateY(-4px);
++      box-shadow: 0 12px 32px rgb(31 60 120 / 0.10);
++    }
++
++    .card-icon {
++      width: 64px;
++      height: 64px;
++      border-radius: 20px;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++      color: #fff;
++      font-size: 24px;
++      font-weight: 600;
++      box-shadow: 0 6px 16px rgb(31 60 120 / 0.14);
++    }
++
++    .card-icon.small-text {
++      font-size: 17px;
++    }
++
++    .card-name {
++      font-size: 15px;
++      font-weight: 500;
++      color: #1f2329;
++    }
++
++    .card-domain {
++      font-size: 12px;
++      color: #8a919f;
++      margin-top: -6px;
++    }
++  </style>
++</head>
++<body>
++  <div class="page">
++    <header class="header">
++      <div class="greeting-block">
++        <div class="avatar">Y</div>
++        <div class="greeting-text">
++          <h1 id="greeting">你好</h1>
++          <p>欢迎回来！选择应用开始你的工作</p>
++        </div>
++      </div>
++      <div class="clock-block">
++        <div id="clock" class="clock">--:--</div>
++        <div id="date" class="date"></div>
++      </div>
++    </header>
++    <main id="app-grid" class="grid"></main>
++  </div>
++  <script type="module" src="./desktop_page.js"></script>
++</body>
++</html>
+diff --git a/chrome/browser/resources/workspace/desktop_page/desktop_page.ts b/chrome/browser/resources/workspace/desktop_page/desktop_page.ts
+new file mode 100644
+index 0000000000..410b7fab66
+--- /dev/null
++++ b/chrome/browser/resources/workspace/desktop_page/desktop_page.ts
+@@ -0,0 +1,109 @@
++// Copyright 2025 The Chromium Authors. Desktop page (workspace home) mock.
++
++interface AppEntry {
++  name: string;
++  domain: string;
++  char: string;
++  color: [string, string];
++  url: string;
++  small?: boolean;
++}
++
++const APPS: AppEntry[] = [
++  {name: '淘宝网', domain: 'taobao.com', char: '淘',
++   color: ['#ff8a3c', '#ff5000'], url: 'https://www.taobao.com/'},
++  {name: '千牛工作台', domain: 'myseller.taobao.com', char: '千',
++   color: ['#ffb14a', '#ff7a00'], url: 'https://myseller.taobao.com/'},
++  {name: '生意参谋', domain: 'sycm.taobao.com', char: '参',
++   color: ['#5b9bf9', '#2f6ef2'], url: 'https://sycm.taobao.com/'},
++  {name: '达摩盘', domain: 'dmp.taobao.com', char: '摩',
++   color: ['#8a7bf5', '#5a4bd6'], url: 'https://dmp.taobao.com/'},
++  {name: '1688', domain: '1688.com', char: '1688', small: true,
++   color: ['#ff9d43', '#f45d04'], url: 'https://www.1688.com/'},
++  {name: '无限画布', domain: 'drawnix.com', char: '画',
++   color: ['#3fc37a', '#1e9e57'], url: 'https://drawnix.com/'},
++  {name: 'BI系统', domain: 'go.ecbis.cn', char: 'BI',
++   color: ['#38b577', '#178a56'], url: 'https://go.ecbis.cn/'},
++  {name: '研报分析', domain: 'agent.ecbis.cn', char: '研',
++   color: ['#38b577', '#178a56'], url: 'https://agent.ecbis.cn/'},
++  {name: '小红书', domain: 'xiaohongshu.com', char: '红',
++   color: ['#ff4d6a', '#e6203f'], url: 'https://www.xiaohongshu.com/'},
++  {name: '抖音', domain: 'douyin.com', char: '抖',
++   color: ['#2b2b36', '#111118'], url: 'https://www.douyin.com/'},
++  {name: '京东', domain: 'jd.com', char: '京',
++   color: ['#e8453a', '#c6281c'], url: 'https://www.jd.com/'},
++  {name: 'AI助手', domain: '智能工作助手', char: '✦',
++   color: ['#9b6ef8', '#6d3fe0'], url: ''},
++  {name: '文件系统', domain: '我的文件管理', char: '🗂',
++   color: ['#f5b93c', '#dd9704'], url: ''},
++  {name: '任务管理', domain: '我的任务列表', char: '✓',
++   color: ['#3ec4b0', '#1f9c89'], url: ''},
++  {name: '技能市场', domain: '发现更多实用技能', char: '▦',
++   color: ['#8a6bf5', '#5a3fd6'], url: ''},
++];
++
++function greetingForHour(hour: number): string {
++  if (hour < 6) {
++    return '夜深了';
++  }
++  if (hour < 12) {
++    return '上午好';
++  }
++  if (hour < 18) {
++    return '下午好';
++  }
++  return '晚上好';
++}
++
++function renderGreeting(): void {
++  const now = new Date();
++  document.getElementById('greeting')!.textContent =
++      greetingForHour(now.getHours()) + '，';
++  const nameSpan = document.createElement('span');
++  nameSpan.textContent = 'YangHan';
++  document.getElementById('greeting')!.appendChild(nameSpan);
++}
++
++function renderClock(): void {
++  const now = new Date();
++  const hh = String(now.getHours()).padStart(2, '0');
++  const mm = String(now.getMinutes()).padStart(2, '0');
++  document.getElementById('clock')!.textContent = hh + ':' + mm;
++  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
++  document.getElementById('date')!.textContent =
++      now.getMonth() + 1 + '月' + now.getDate() + '日 星期' +
++      weekdays[now.getDay()];
++}
++
++function renderApps(): void {
++  const grid = document.getElementById('app-grid')!;
++  for (const app of APPS) {
++    const card = document.createElement('a');
++    card.className = 'card';
++    if (app.url) {
++      card.href = app.url;
++    } else {
++      card.href = '#';  // Placeholder entry.
++    }
++    const icon = document.createElement('div');
++    icon.className = app.small ? 'card-icon small-text' : 'card-icon';
++    icon.textContent = app.char;
++    icon.style.background =
++        'linear-gradient(135deg, ' + app.color[0] + ', ' + app.color[1] + ')';
++    const name = document.createElement('div');
++    name.className = 'card-name';
++    name.textContent = app.name;
++    const domain = document.createElement('div');
++    domain.className = 'card-domain';
++    domain.textContent = app.domain;
++    card.appendChild(icon);
++    card.appendChild(name);
++    card.appendChild(domain);
++    grid.appendChild(card);
++  }
++}
++
++renderGreeting();
++renderClock();
++setInterval(renderClock, 1000);
++renderApps();
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index 7a2b0607e2..347198c0ad 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1444,6 +1444,10 @@ static_library("ui") {
+       "webui/web_app_internals/web_app_internals_handler.h",
+       "webui/web_app_internals/web_app_internals_ui.cc",
+       "webui/web_app_internals/web_app_internals_ui.h",
++      "views/workspace/workspace_rail_view.cc",
++      "views/workspace/workspace_rail_view.h",
++      "webui/workspace/desktop_page_ui.cc",
++      "webui/workspace/desktop_page_ui.h",
+       "webui/webui_gallery/webui_gallery_ui.cc",
+       "webui/webui_gallery/webui_gallery_ui.h",
+       "webui/webui_js_error/webui_js_error_ui.cc",
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index c212994fa3..692cad78ba 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -203,6 +203,7 @@
+ #include "chrome/browser/ui/views/tabs/browser_tab_strip_controller.h"
+ #include "chrome/browser/ui/views/tabs/new_tab_button.h"
+ #include "chrome/browser/ui/views/tabs/projects/projects_panel_view.h"
++#include "chrome/browser/ui/views/workspace/workspace_rail_view.h"
+ #include "chrome/browser/ui/views/tabs/shared/tab_strip_combo_button.h"
+ #include "chrome/browser/ui/views/tabs/shared/tab_strip_flat_edge_button.h"
+ #include "chrome/browser/ui/views/tabs/tab.h"
+@@ -1042,6 +1043,10 @@ BrowserView::BrowserView(Browser* browser)
+                                 base::Unretained(this)));
+   }
+ 
++  // Left workspace rail (product custom UI).
++  workspace_rail_ =
++      AddChildView(std::make_unique<WorkspaceRailView>(browser_.get()));
++
+   // Create do-nothing view for the sake of controlling the z-order of the find
+   // bar widget.
+   find_bar_host_view_ = AddChildView(std::make_unique<View>());
+@@ -1149,6 +1154,7 @@ BrowserView::~BrowserView() {
+   vertical_tab_strip_top_corner_ = nullptr;
+   vertical_tab_strip_bottom_corner_ = nullptr;
+   projects_panel_container_ = nullptr;
++  workspace_rail_ = nullptr;
+   toolbar_height_side_panel_ = nullptr;
+   contents_height_side_panel_ = nullptr;
+   toolbar_button_provider_ = nullptr;
+@@ -5210,6 +5216,7 @@ void BrowserView::AddedToWidget() {
+       vertical_tab_strip_bottom_corner_;
+   layout_views.vertical_tab_strip_top_corner = vertical_tab_strip_top_corner_;
+   layout_views.projects_panel_container = projects_panel_container_;
++  layout_views.workspace_rail = workspace_rail_;
+   layout_views.toolbar = toolbar_;
+   layout_views.infobar_container = infobar_container_;
+   layout_views.contents_container = contents_container_;
+diff --git a/chrome/browser/ui/views/frame/browser_view.h b/chrome/browser/ui/views/frame/browser_view.h
+index 3d940fa35f..d7c4ab10e3 100644
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -83,6 +83,7 @@ class InfoBarContainerView;
+ class LocationBarView;
+ class MultiContentsView;
+ class ProjectsPanelView;
++class WorkspaceRailView;
+ class ScrimView;
+ class SidePanel;
+ class TabDragTarget;
+@@ -1307,6 +1308,7 @@ class BrowserView : public BrowserWindow,
+ 
+   // The view responsible for housing the contents of the projects panel.
+   raw_ptr<ProjectsPanelView> projects_panel_container_ = nullptr;
++  raw_ptr<WorkspaceRailView> workspace_rail_ = nullptr;
+ 
+   // Side panel that extends to the height of the toolbar.
+   raw_ptr<SidePanel> toolbar_height_side_panel_ = nullptr;
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_layout.h b/chrome/browser/ui/views/frame/layout/browser_view_layout.h
+index ad9d319a92..578dd679f0 100644
+--- a/chrome/browser/ui/views/frame/layout/browser_view_layout.h
++++ b/chrome/browser/ui/views/frame/layout/browser_view_layout.h
+@@ -21,6 +21,7 @@ class BrowserViewLayoutDelegate;
+ class InfoBarContainerView;
+ class MultiContentsView;
+ class ProjectsPanelView;
++class WorkspaceRailView;
+ class SidePanel;
+ class TabStrip;
+ class HorizontalTabStripRegionView;
+@@ -70,6 +71,7 @@ struct BrowserViewLayoutViews {
+   raw_ptr<CustomFloatingCorner> vertical_tab_strip_bottom_corner = nullptr;
+   raw_ptr<CustomFloatingCorner> vertical_tab_strip_top_corner = nullptr;
+   raw_ptr<ProjectsPanelView> projects_panel_container = nullptr;
++  raw_ptr<WorkspaceRailView> workspace_rail = nullptr;
+   raw_ptr<views::View> toolbar = nullptr;
+   raw_ptr<InfoBarContainerView> infobar_container = nullptr;
+   raw_ptr<views::View> contents_container = nullptr;
+diff --git a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+index c6c9977ab6..bf1fcf5ab6 100644
+--- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+@@ -21,6 +21,7 @@
+ #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view.h"
+ #include "chrome/browser/ui/views/frame/custom_corners_background.h"
+ #include "chrome/browser/ui/views/frame/custom_floating_corner.h"
++#include "chrome/browser/ui/views/workspace/workspace_rail_view.h"
+ #include "chrome/browser/ui/views/frame/horizontal_tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+ #include "chrome/browser/ui/views/frame/layout/browser_view_layout_delegate.h"
+@@ -970,6 +971,18 @@ BrowserViewTabbedLayoutImpl::CalculateProposedLayout(
+     params.SetTop(top_container_layout.bounds.bottom());
+   }
+ 
++  // Lay out the workspace rail (left column below the top container).
++  if (IsParentedTo(views().workspace_rail, views().browser_view)) {
++    gfx::Rect rail_bounds(params.visual_client_area.x(),
++                          params.visual_client_area.y(),
++                          WorkspaceRailView::kRailWidth,
++                          params.visual_client_area.height());
++    layout.AddChild(views().workspace_rail, rail_bounds);
++    params.InsetHorizontal(WorkspaceRailView::kRailWidth, /*leading=*/true);
++    InsetHorizontal(unclipped_contents_region, WorkspaceRailView::kRailWidth,
++                    /*leading=*/true);
++  }
++
+   // Lay out infobar container.
+   if (IsParentedTo(views().infobar_container, views().browser_view)) {
+     gfx::Rect infobar_bounds;
+diff --git a/chrome/browser/ui/views/workspace/workspace_rail_view.cc b/chrome/browser/ui/views/workspace/workspace_rail_view.cc
+new file mode 100644
+index 0000000000..243ca9f2f4
+--- /dev/null
++++ b/chrome/browser/ui/views/workspace/workspace_rail_view.cc
+@@ -0,0 +1,142 @@
++// Copyright 2025 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/workspace/workspace_rail_view.h"
++
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "base/functional/callback_helpers.h"
++#include "chrome/browser/ui/browser.h"
++#include "chrome/browser/ui/browser_navigator.h"
++#include "chrome/browser/ui/browser_navigator_params.h"
++#include "components/vector_icons/vector_icons.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/gfx/paint_vector_icon.h"
++#include "ui/views/background.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/controls/button/button.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/layout/fill_layout.h"
++
++namespace {
++
++constexpr SkColor kRailBackground = SkColorSetRGB(0xF7, 0xF9, 0xFC);
++constexpr SkColor kItemForeground = SkColorSetRGB(0x4E, 0x55, 0x60);
++constexpr SkColor kAvatarBlue = SkColorSetRGB(0x4F, 0x7D, 0xF7);
++constexpr int kIconSize = 22;
++constexpr int kItemHeight = 52;
++
++// views::Button's constructor is protected; expose a concrete subclass for
++// simple custom rail buttons.
++class RailButton : public views::Button {
++  METADATA_HEADER(RailButton, views::Button)
++
++ public:
++  explicit RailButton(PressedCallback callback)
++      : views::Button(std::move(callback)) {}
++};
++
++}  // namespace
++
++WorkspaceRailView::WorkspaceRailView(Browser* browser) : browser_(browser) {
++  SetBackground(views::CreateSolidBackground(kRailBackground));
++  auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical,
++      gfx::Insets::TLBR(20, 0, 16, 0), 2));
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++
++  // Letter avatar.
++  auto avatar_button = std::make_unique<RailButton>(
++      base::BindRepeating(&WorkspaceRailView::OpenUrl, base::Unretained(this),
++                          GURL("chrome://version")));
++  avatar_button->GetViewAccessibility().SetName(u"用户头像");
++  avatar_button->SetPreferredSize(gfx::Size(40, 40));
++  avatar_button->SetBackground(
++      views::CreateRoundedRectBackground(kAvatarBlue, 20));
++  avatar_button->SetLayoutManager(std::make_unique<views::FillLayout>());
++  auto avatar_label = std::make_unique<views::Label>(u"Y");
++  avatar_label->SetAutoColorReadabilityEnabled(false);
++  avatar_label->SetEnabledColor(SK_ColorWHITE);
++  avatar_label->SetFontList(avatar_label->font_list().DeriveWithWeight(
++      gfx::Font::Weight::MEDIUM));
++  avatar_label->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_CENTER);
++  avatar_label->SetVerticalAlignment(gfx::VerticalAlignment::ALIGN_MIDDLE);
++  avatar_button->AddChildView(std::move(avatar_label));
++  AddChildView(std::move(avatar_button));
++
++  AddRailItem(
++      u"桌面", kNavigateHomeChromeRefreshIcon,
++      base::BindRepeating(&WorkspaceRailView::OpenUrl, base::Unretained(this),
++                          GURL("chrome://desktop")));
++  AddRailItem(u"AI", kDraftSparkIcon, base::DoNothing());
++  AddRailItem(u"文件", vector_icons::kFolderIcon, base::DoNothing());
++  AddRailItem(u"技能", vector_icons::kStarIcon, base::DoNothing());
++  AddRailItem(u"任务", kCheckIcon, base::DoNothing());
++
++  // Flexible spacer pushes the utilities to the bottom.
++  views::View* spacer = AddChildView(std::make_unique<views::View>());
++  layout->SetFlexForView(spacer, 1);
++
++  AddIconButton(
++      vector_icons::kSettingsOutlineIcon,
++      base::BindRepeating(&WorkspaceRailView::OpenUrl, base::Unretained(this),
++                          GURL("chrome://settings")),
++      u"设置");
++}
++
++WorkspaceRailView::~WorkspaceRailView() = default;
++
++void WorkspaceRailView::AddRailItem(const std::u16string& text,
++                                    const gfx::VectorIcon& icon,
++                                    base::RepeatingClosure callback) {
++  auto button = std::make_unique<RailButton>(std::move(callback));
++  button->SetPreferredSize(gfx::Size(kRailWidth, kItemHeight));
++  auto* box = button->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(6, 0, 4, 0),
++      2));
++  box->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++
++  auto image = std::make_unique<views::ImageView>(
++      ui::ImageModel::FromVectorIcon(icon, kItemForeground, kIconSize));
++  button->AddChildView(std::move(image));
++
++  auto label = std::make_unique<views::Label>(text);
++  label->SetAutoColorReadabilityEnabled(false);
++  label->SetEnabledColor(kItemForeground);
++  label->SetFontList(label->font_list().DeriveWithSizeDelta(-1));
++  button->AddChildView(std::move(label));
++
++  button->GetViewAccessibility().SetName(text);
++  AddChildView(std::move(button));
++}
++
++void WorkspaceRailView::AddIconButton(const gfx::VectorIcon& icon,
++                                      base::RepeatingClosure callback,
++                                      const std::u16string& name) {
++  auto button = std::make_unique<RailButton>(std::move(callback));
++  button->SetPreferredSize(gfx::Size(36, 36));
++  button->AddChildView(std::make_unique<views::ImageView>(
++      ui::ImageModel::FromVectorIcon(icon, kItemForeground, 20)));
++  button->GetViewAccessibility().SetName(name);
++  AddChildView(std::move(button));
++}
++
++void WorkspaceRailView::OpenUrl(const GURL& url) {
++  NavigateParams params(browser_.get(), url,
++                        ui::PAGE_TRANSITION_AUTO_BOOKMARK);
++  params.disposition = WindowOpenDisposition::CURRENT_TAB;
++  Navigate(&params);
++}
++
++BEGIN_METADATA(RailButton)
++END_METADATA
++
++BEGIN_METADATA(WorkspaceRailView)
++END_METADATA
+diff --git a/chrome/browser/ui/views/workspace/workspace_rail_view.h b/chrome/browser/ui/views/workspace/workspace_rail_view.h
+new file mode 100644
+index 0000000000..b5a337cbd7
+--- /dev/null
++++ b/chrome/browser/ui/views/workspace/workspace_rail_view.h
+@@ -0,0 +1,45 @@
++// Copyright 2025 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_WORKSPACE_WORKSPACE_RAIL_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_WORKSPACE_WORKSPACE_RAIL_VIEW_H_
++
++#include "base/functional/callback.h"
++#include "base/memory/raw_ptr.h"
++#include "ui/gfx/vector_icon_types.h"
++#include "ui/views/view.h"
++#include "url/gurl.h"
++
++class Browser;
++
++// Left workspace rail: letter avatar + navigation items (desktop / AI / files /
++// skills / tasks) + bottom utilities. Mock version: only the desktop item and
++// settings button navigate; the rest are placeholders.
++class WorkspaceRailView : public views::View {
++  METADATA_HEADER(WorkspaceRailView, views::View)
++
++ public:
++  static constexpr int kRailWidth = 84;
++
++  explicit WorkspaceRailView(Browser* browser);
++  ~WorkspaceRailView() override;
++
++  WorkspaceRailView(const WorkspaceRailView&) = delete;
++  WorkspaceRailView& operator=(const WorkspaceRailView&) = delete;
++
++ private:
++  // Icon-on-top, label-below rail item.
++  void AddRailItem(const std::u16string& text,
++                   const gfx::VectorIcon& icon,
++                   base::RepeatingClosure callback);
++  // Icon-only button (bottom utilities).
++  void AddIconButton(const gfx::VectorIcon& icon,
++                     base::RepeatingClosure callback,
++                     const std::u16string& name);
++  void OpenUrl(const GURL& url);
++
++  raw_ptr<Browser> browser_;
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_WORKSPACE_WORKSPACE_RAIL_VIEW_H_
+diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+index aa66cf8c1e..2cc68f3c9e 100644
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -128,6 +128,7 @@
+ #include "chrome/browser/ui/webui/web_app_internals/web_app_internals_ui.h"
+ #include "chrome/browser/ui/webui/webnn_internals/webnn_internals_ui.h"
+ #include "chrome/browser/ui/webui/webui_gallery/webui_gallery_ui.h"
++#include "chrome/browser/ui/webui/workspace/desktop_page_ui.h"
+ #include "chrome/browser/ui/webui/webui_js_error/webui_js_error_ui.h"
+ #else  // !BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/ui/webui/feed_internals/feed_internals_ui.h"
+@@ -373,6 +374,7 @@ void RegisterChromeWebUIConfigs() {
+   map.AddWebUIConfig(std::make_unique<WebNNInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<WebUIBrowserUIConfig>());
+   map.AddWebUIConfig(std::make_unique<WebuiGalleryUIConfig>());
++  map.AddWebUIConfig(std::make_unique<WorkspaceDesktopUIConfig>());
+   map.AddWebUIConfig(std::make_unique<WebUIJsErrorUIConfig>());
+   map.AddWebUIConfig(std::make_unique<WebUIToolbarConfig>());
+ #endif  // BUILDFLAG(IS_ANDROID)
+diff --git a/chrome/browser/ui/webui/workspace/desktop_page_ui.cc b/chrome/browser/ui/webui/workspace/desktop_page_ui.cc
+new file mode 100644
+index 0000000000..673741de1d
+--- /dev/null
++++ b/chrome/browser/ui/webui/workspace/desktop_page_ui.cc
+@@ -0,0 +1,31 @@
++// Copyright 2025 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/workspace/desktop_page_ui.h"
++
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/grit/workspace_desktop_resources.h"
++#include "chrome/grit/workspace_desktop_resources_map.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/browser/web_ui_data_source.h"
++#include "ui/webui/webui_util.h"
++
++namespace {
++
++void CreateAndAddDesktopPageSource(Profile* profile) {
++  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
++      profile, chrome::kChromeUIWorkspaceDesktopHost);
++
++  webui::SetupWebUIDataSource(source, base::span(kWorkspaceDesktopResources),
++                              IDR_WORKSPACE_DESKTOP_DESKTOP_PAGE_HTML);
++}
++
++}  // namespace
++
++WorkspaceDesktopUI::WorkspaceDesktopUI(content::WebUI* web_ui)
++    : WebUIController(web_ui) {
++  CreateAndAddDesktopPageSource(Profile::FromWebUI(web_ui));
++}
++
++WorkspaceDesktopUI::~WorkspaceDesktopUI() = default;
+diff --git a/chrome/browser/ui/webui/workspace/desktop_page_ui.h b/chrome/browser/ui/webui/workspace/desktop_page_ui.h
+new file mode 100644
+index 0000000000..40a256e4ca
+--- /dev/null
++++ b/chrome/browser/ui/webui/workspace/desktop_page_ui.h
+@@ -0,0 +1,32 @@
++// Copyright 2025 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_WORKSPACE_DESKTOP_PAGE_UI_H_
++#define CHROME_BROWSER_UI_WEBUI_WORKSPACE_DESKTOP_PAGE_UI_H_
++
++#include "chrome/common/webui_url_constants.h"
++#include "content/public/browser/internal_webui_config.h"
++#include "content/public/browser/web_ui_controller.h"
++
++class WorkspaceDesktopUI;
++
++// Config for the chrome://desktop workspace home page.
++class WorkspaceDesktopUIConfig
++    : public content::DefaultInternalWebUIConfig<WorkspaceDesktopUI> {
++ public:
++  WorkspaceDesktopUIConfig()
++      : DefaultInternalWebUIConfig(chrome::kChromeUIWorkspaceDesktopHost) {}
++};
++
++// The Web UI controller for the chrome://desktop page (workspace home mock).
++class WorkspaceDesktopUI : public content::WebUIController {
++ public:
++  explicit WorkspaceDesktopUI(content::WebUI* web_ui);
++  ~WorkspaceDesktopUI() override;
++
++  WorkspaceDesktopUI(const WorkspaceDesktopUI&) = delete;
++  WorkspaceDesktopUI& operator=(const WorkspaceDesktopUI&) = delete;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_WORKSPACE_DESKTOP_PAGE_UI_H_
+diff --git a/chrome/chrome_paks.gni b/chrome/chrome_paks.gni
+index ffc4930414..e1ab75a236 100644
+--- a/chrome/chrome_paks.gni
++++ b/chrome/chrome_paks.gni
+@@ -256,6 +256,7 @@ template("chrome_extra_paks") {
+         "$root_gen_dir/chrome/webui_browser_resources.pak",
+         "$root_gen_dir/chrome/webui_gallery_resources.pak",
+         "$root_gen_dir/chrome/webui_toolbar_resources.pak",
++        "$root_gen_dir/chrome/workspace_desktop_resources.pak",
+         "$root_gen_dir/chrome/whats_new_resources.pak",
+         "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
+         "$root_gen_dir/content/traces_internals_resources.pak",
+@@ -273,6 +274,7 @@ template("chrome_extra_paks") {
+         "//chrome/browser/resources/tab_group_home:resources",
+         "//chrome/browser/resources/webnn_internals:resources",
+         "//chrome/browser/resources/webui_toolbar:resources",
++        "//chrome/browser/resources/workspace/desktop_page:resources",
+         "//content/browser/tracing:resources",
+       ]
+       if (is_chrome_branded) {
+diff --git a/chrome/common/webui_url_constants.h b/chrome/common/webui_url_constants.h
+index 7444483ddc..46ae3075a4 100644
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -345,6 +345,7 @@ inline constexpr char kChromeUIVersionURL[] = "chrome://version/";
+ inline constexpr char16_t kChromeUIVersionURL16[] = u"chrome://version/";
+ inline constexpr char kChromeUIWebRtcLogsHost[] = "webrtc-logs";
+ inline constexpr char kChromeUIWebuiGalleryHost[] = "webui-gallery";
++inline constexpr char kChromeUIWorkspaceDesktopHost[] = "desktop";
+ inline constexpr char kChromeUIWebUITestHost[] = "webui-test";
+ inline constexpr char kChromeUIWebUIToolbarURL[] =
+     "chrome://webui-toolbar.top-chrome";
+diff --git a/components/webui/chrome_urls/pref_names.cc b/components/webui/chrome_urls/pref_names.cc
+index 95332a4e68..3b01aeaef6 100644
+--- a/components/webui/chrome_urls/pref_names.cc
++++ b/components/webui/chrome_urls/pref_names.cc
+@@ -9,7 +9,10 @@
+ namespace chrome_urls {
+ 
+ void RegisterPrefs(PrefRegistrySimple* registry) {
+-  registry->RegisterBooleanPref(kInternalOnlyUisEnabled, false);
++  // fingerprint-chromium workspace build: keep internal WebUIs (chrome://version,
++  // chrome://desktop, ...) enabled by default, unlike upstream's debug-only
++  // default. This is a full-browser product, not a stripped debug build.
++  registry->RegisterBooleanPref(kInternalOnlyUisEnabled, true);
+ }
+ 
+ }  // namespace chrome_urls
+diff --git a/tools/gritsettings/resource_ids.spec b/tools/gritsettings/resource_ids.spec
+index ffd47250ce..16b8a02218 100644
+--- a/tools/gritsettings/resource_ids.spec
++++ b/tools/gritsettings/resource_ids.spec
+@@ -1678,6 +1678,13 @@
+     "includes": [12000],
+   },
+ 
++  # fingerprint-chromium workspace product UI (appended; ids must stay
++  # increasing).
++  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/workspace/desktop_page/resources.grd": {
++    "META": {"sizes": {"includes": [10]}},
++    "includes": [13000],
++  },
++
+   # END "everything else" section.
+   # Everything but chrome/, components/, content/, and ios/
+ 
+-- 
+2.54.0 (Apple Git-157)
+
